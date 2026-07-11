@@ -27,208 +27,243 @@ function App() {
   useEffect(() => {
     const transport = Tone.getTransport();
 
-    const limiter = new Tone.Limiter(-10).toDestination();
+    const limiter = new Tone.Limiter(-8).toDestination();
     const compressor = new Tone.Compressor({
-      threshold: -34,
-      ratio: 1.7,
-      attack: 0.08,
-      release: 0.48,
+      threshold: -26,
+      ratio: 1.35,
+      attack: 0.035,
+      release: 0.22,
     }).connect(limiter);
-    const dryBus = new Tone.Gain(0.56).connect(compressor);
-    const ambience = new Tone.Reverb({
-      decay: 5.6,
-      preDelay: 0.045,
-      wet: 0.58,
+    const masterSaturation = new Tone.Distortion({
+      distortion: 0.025,
+      oversample: '2x',
+      wet: 0.12,
     }).connect(compressor);
-    const ambienceSend = new Tone.Gain(0.3).connect(ambience);
+    const masterLowCut = new Tone.Filter({
+      type: 'highpass',
+      frequency: 25,
+      rolloff: -24,
+      Q: 0.3,
+    }).connect(masterSaturation);
+    const dryBus = new Tone.Gain(0.76).connect(masterLowCut);
+    const ambienceReturn = new Tone.Gain(0.2).connect(masterLowCut);
+    const ambience = new Tone.Reverb({
+      decay: 4.2,
+      preDelay: 0.038,
+      wet: 1,
+    }).connect(ambienceReturn);
+    const kickSend = new Tone.Gain(0.035).connect(ambience);
+    const percussionSend = new Tone.Gain(0.085).connect(ambience);
+    const hatSend = new Tone.Gain(0.055).connect(ambience);
+    const glitchSend = new Tone.Gain(0.1).connect(ambience);
+    const bassSend = new Tone.Gain(0.035).connect(ambience);
 
-    // 短い紙片や水滴のような粒だけを受け持つ、控えめなグリッチ層。
+    // 白色ノイズを極短エンベロープで切り出す、精密な粒子グリッチ層。
     const grainVoices = Array.from({ length: 12 }, () => new Tone.NoiseSynth({
-      noise: { type: 'brown' },
-      envelope: { attack: 0.002, decay: 0.065, sustain: 0, release: 0.07 },
-      volume: -22,
+      noise: { type: 'white' },
+      envelope: { attack: 0.0005, decay: 0.018, sustain: 0, release: 0.01 },
+      volume: -26,
     }));
     const grainFilter = new Tone.Filter({
       type: 'bandpass',
       frequency: 1100,
-      Q: 0.82,
+      Q: 1.65,
     });
     const grainCrusher = new Tone.BitCrusher({
-      bits: 5,
-      wet: 0.52,
+      bits: 4,
+      wet: 0.24,
     });
     const grainDelay = new Tone.FeedbackDelay({
-      delayTime: Tone.Time('64n').toSeconds(),
-      feedback: 0.16,
-      wet: 0.34,
+      delayTime: Tone.Time('128n').toSeconds(),
+      feedback: 0.09,
+      wet: 0.14,
     });
-    const grainGain = new Tone.Gain(0.34).connect(compressor);
+    const grainGain = new Tone.Gain(0.38).connect(dryBus);
 
     // 残光の層。純音に近い柔らかな粒を長い空間へ溶かす。
     const droplet = new Tone.PolySynth(Tone.Synth, {
       oscillator: { type: 'sine' },
-      envelope: { attack: 0.22, decay: 1.2, sustain: 0.12, release: 5.4 },
+      envelope: { attack: 0.14, decay: 0.8, sustain: 0.08, release: 4.2 },
     });
-    droplet.volume.value = -32;
+    droplet.volume.value = -34;
     const dropletFilter = new Tone.Filter({
       type: 'lowpass',
-      frequency: 2200,
+      frequency: 1850,
       rolloff: -24,
       Q: 0.42,
     });
     const dropletDelay = new Tone.PingPongDelay({
       delayTime: Tone.Time('8n.').toSeconds(),
-      feedback: 0.19,
-      wet: 0.54,
+      feedback: 0.16,
+      wet: 0.36,
     });
     const chordReverb = new Tone.Reverb({
-      decay: 10.5,
-      preDelay: 0.12,
-      wet: 0.76,
-    }).connect(compressor);
+      decay: 8.2,
+      preDelay: 0.09,
+      wet: 1,
+    });
+    const chordDry = new Tone.Gain(0.2).connect(dryBus);
+    const chordReturn = new Tone.Gain(0.18).connect(masterLowCut);
+    chordReverb.connect(chordReturn);
 
     // 空気の膜の層。輪郭を持たない低いノイズがゆっくり開いて閉じる。
     const airBed = new Tone.NoiseSynth({
       noise: { type: 'pink' },
-      envelope: { attack: 0.32, decay: 1.1, sustain: 0.04, release: 1.45 },
-      volume: -34,
+      envelope: { attack: 0.18, decay: 0.72, sustain: 0.02, release: 1.1 },
+      volume: -38,
     });
     const airBedFilter = new Tone.Filter({
       type: 'bandpass',
-      frequency: 560,
-      Q: 0.36,
+      frequency: 820,
+      Q: 0.5,
     });
-    const airBedGain = new Tone.Gain(0.46).connect(compressor);
+    const airBedGain = new Tone.Gain(0.28).connect(ambience);
 
     const kick = new Tone.MembraneSynth({
-      pitchDecay: 0.018,
-      octaves: 1.7,
+      pitchDecay: 0.024,
+      octaves: 2.25,
       oscillator: { type: 'sine' },
-      envelope: { attack: 0.002, decay: 0.32, sustain: 0, release: 0.16 },
-      volume: -15,
+      envelope: { attack: 0.001, decay: 0.17, sustain: 0, release: 0.055 },
+      volume: -16,
     });
-    const kickSub = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: 'sine' },
-      envelope: { attack: 0.001, decay: 0.38, sustain: 0, release: 0.14 },
+    const kickClicks = Array.from({ length: 4 }, () => new Tone.NoiseSynth({
+      noise: { type: 'white' },
+      envelope: { attack: 0.0005, decay: 0.007, sustain: 0, release: 0.004 },
+      volume: -38,
+    }));
+    const kickClickHighPass = new Tone.Filter({
+      type: 'highpass',
+      frequency: 1800,
+      rolloff: -24,
+      Q: 0.6,
     });
-    kickSub.volume.value = -20;
+    const kickClickLowPass = new Tone.Filter({
+      type: 'lowpass',
+      frequency: 6200,
+      rolloff: -24,
+    });
     const kickFilter = new Tone.Filter({
       type: 'lowpass',
-      frequency: 185,
+      frequency: 175,
       rolloff: -24,
-      Q: 0.58,
+      Q: 0.48,
+    });
+    const kickLowCut = new Tone.Filter({
+      type: 'highpass',
+      frequency: 29,
+      rolloff: -24,
+      Q: 0.3,
     });
     const kickDrive = new Tone.Distortion({
-      distortion: 0.08,
+      distortion: 0.065,
       oversample: '2x',
-      wet: 0.24,
+      wet: 0.18,
     });
 
     const bass = new Tone.PolySynth(Tone.Synth, {
       oscillator: { type: 'sine' },
-      envelope: { attack: 0.028, decay: 0.24, sustain: 0.18, release: 0.78 },
+      envelope: { attack: 0.004, decay: 0.11, sustain: 0.04, release: 0.17 },
     });
-    bass.volume.value = -21;
+    bass.volume.value = -20;
     const bassFilter = new Tone.Filter({
       type: 'lowpass',
-      frequency: 245,
+      frequency: 340,
       rolloff: -24,
-      Q: 0.46,
+      Q: 0.62,
+    });
+    const bassLowCut = new Tone.Filter({
+      type: 'highpass',
+      frequency: 38,
+      rolloff: -24,
+      Q: 0.3,
     });
     const bassDrive = new Tone.Distortion({
-      distortion: 0.022,
+      distortion: 0.035,
       oversample: '2x',
-      wet: 0.1,
+      wet: 0.14,
     });
-    const bassAmbience = new Tone.Gain(0.09).connect(ambience);
 
     const snareVoices = Array.from({ length: 4 }, () => new Tone.NoiseSynth({
-      noise: { type: 'pink' },
-      envelope: { attack: 0.045, decay: 0.54, sustain: 0, release: 0.42 },
-      volume: -25,
+      noise: { type: 'white' },
+      envelope: { attack: 0.001, decay: 0.085, sustain: 0, release: 0.028 },
+      volume: -27,
     }));
+    const percussionFm = new Tone.PolySynth(Tone.FMSynth, {
+      harmonicity: 1.72,
+      modulationIndex: 2.4,
+      oscillator: { type: 'sine' },
+      modulation: { type: 'sine' },
+      envelope: { attack: 0.001, decay: 0.055, sustain: 0, release: 0.025 },
+      modulationEnvelope: { attack: 0.001, decay: 0.032, sustain: 0, release: 0.018 },
+    });
+    percussionFm.volume.value = -34;
     const snareBody = new Tone.Filter({
       type: 'bandpass',
-      frequency: 980,
-      Q: 0.55,
+      frequency: 1450,
+      Q: 1.05,
     });
     const snareSoftener = new Tone.Filter({
       type: 'lowpass',
-      frequency: 2600,
+      frequency: 4800,
       rolloff: -24,
     });
 
     const hatVoices = Array.from({ length: 4 }, () => new Tone.NoiseSynth({
-      noise: { type: 'pink' },
-      envelope: { attack: 0.026, decay: 0.18, sustain: 0.01, release: 0.26 },
-      volume: -30,
+      noise: { type: 'white' },
+      envelope: { attack: 0.001, decay: 0.042, sustain: 0, release: 0.018 },
+      volume: -32,
     }));
     const hatAir = new Tone.Filter({
       type: 'highpass',
-      frequency: 1600,
-      rolloff: -12,
-      Q: 0.35,
+      frequency: 3300,
+      rolloff: -24,
+      Q: 0.42,
     });
     const hatSoftener = new Tone.Filter({
       type: 'lowpass',
-      frequency: 4200,
+      frequency: 8200,
       rolloff: -24,
     });
-    const breathLfo = new Tone.LFO({
-      frequency: 0.025,
-      min: 95,
-      max: 150,
-    }).start();
-    const paperLfo = new Tone.LFO({
-      frequency: 0.017,
-      min: 760,
-      max: 1180,
-    }).start();
-    const airLfo = new Tone.LFO({
-      frequency: 0.021,
-      min: 3100,
-      max: 4700,
-    }).start();
 
     kick.connect(kickFilter);
-    kickSub.connect(kickFilter);
-    kickFilter.connect(kickDrive);
+    kickFilter.connect(kickLowCut);
+    kickLowCut.connect(kickDrive);
     kickDrive.connect(dryBus);
-    kickDrive.connect(ambienceSend);
+    kickDrive.connect(kickSend);
+    kickClicks.forEach((voice) => voice.connect(kickClickHighPass));
+    kickClickHighPass.connect(kickClickLowPass);
+    kickClickLowPass.connect(dryBus);
 
     bass.connect(bassFilter);
-    bassFilter.connect(bassDrive);
+    bassFilter.connect(bassLowCut);
+    bassLowCut.connect(bassDrive);
     bassDrive.connect(dryBus);
-    bassDrive.connect(bassAmbience);
+    bassDrive.connect(bassSend);
 
     snareVoices.forEach((voice) => voice.connect(snareBody));
+    percussionFm.connect(snareBody);
     snareBody.connect(snareSoftener);
     snareSoftener.connect(dryBus);
-    snareSoftener.connect(ambienceSend);
+    snareSoftener.connect(percussionSend);
 
     hatVoices.forEach((voice) => voice.connect(hatAir));
     hatAir.connect(hatSoftener);
     hatSoftener.connect(dryBus);
-    hatSoftener.connect(ambienceSend);
+    hatSoftener.connect(hatSend);
 
     grainVoices.forEach((voice) => voice.connect(grainFilter));
     grainFilter.connect(grainCrusher);
     grainCrusher.connect(grainDelay);
     grainDelay.connect(grainGain);
-    grainDelay.connect(ambienceSend);
+    grainDelay.connect(glitchSend);
 
     droplet.connect(dropletFilter);
     dropletFilter.connect(dropletDelay);
     dropletDelay.connect(chordReverb);
-    dropletDelay.connect(dryBus);
+    dropletDelay.connect(chordDry);
 
     airBed.connect(airBedFilter);
     airBedFilter.connect(airBedGain);
-    airBedFilter.connect(ambienceSend);
-
-    breathLfo.connect(kickFilter.frequency);
-    paperLfo.connect(snareBody.frequency);
-    airLfo.connect(hatSoftener.frequency);
 
     synthsRef.current = {
       Kick: kick,
@@ -237,19 +272,21 @@ function App() {
       'Hi-Hat': hatVoices,
       effects: [
         kickFilter,
-        kickSub,
+        kickLowCut,
+        ...kickClicks,
+        kickClickHighPass,
+        kickClickLowPass,
         kickDrive,
         bass,
         bassFilter,
+        bassLowCut,
         bassDrive,
-        bassAmbience,
+        bassSend,
+        percussionFm,
         snareBody,
         snareSoftener,
         hatAir,
         hatSoftener,
-        breathLfo,
-        paperLfo,
-        airLfo,
         ...grainVoices,
         grainFilter,
         grainCrusher,
@@ -259,12 +296,20 @@ function App() {
         dropletFilter,
         dropletDelay,
         chordReverb,
+        chordDry,
+        chordReturn,
         airBed,
         airBedFilter,
         airBedGain,
-        ambienceSend,
+        kickSend,
+        percussionSend,
+        hatSend,
+        glitchSend,
         ambience,
+        ambienceReturn,
         dryBus,
+        masterLowCut,
+        masterSaturation,
         compressor,
         limiter,
       ],
@@ -295,29 +340,36 @@ function App() {
         const kickVelocity = velocityFor('Kick');
         kick.triggerAttackRelease(
           'C1',
-          '8n',
+          0.14,
           time + timingFor('Kick'),
-          Math.min(0.48, kickVelocity * 0.5),
+          Math.min(0.5, kickVelocity * 0.52),
         );
-        kickSub.triggerAttackRelease(
-          'C1',
-          '8n',
+        kickClicks[step % kickClicks.length].triggerAttackRelease(
+          0.009,
           time + timingFor('Kick'),
-          Math.min(0.32, kickVelocity * 0.32),
+          Math.min(0.24, kickVelocity * 0.2),
         );
       }
       if (activePattern.Snare[step]) {
+        const percussionTime = time + timingFor('Snare');
+        const percussionVelocity = velocityFor('Snare');
         snareVoices[step % snareVoices.length].triggerAttackRelease(
-          0.42,
-          time + timingFor('Snare'),
-          Math.min(0.34, velocityFor('Snare') * 0.4),
+          0.09,
+          percussionTime,
+          Math.min(0.38, percussionVelocity * 0.42),
+        );
+        percussionFm.triggerAttackRelease(
+          step < 8 ? 'G4' : 'C5',
+          0.052,
+          percussionTime,
+          Math.min(0.2, percussionVelocity * 0.2),
         );
       }
       if (activePattern['Hi-Hat'][step]) {
         hatVoices[step % hatVoices.length].triggerAttackRelease(
-          0.18,
+          0.045,
           time + timingFor('Hi-Hat'),
-          Math.max(0.12, velocityFor('Hi-Hat') * 0.3),
+          Math.max(0.1, velocityFor('Hi-Hat') * 0.26),
         );
       }
 
@@ -333,7 +385,7 @@ function App() {
 
         grainEvents.push({
           time: fragmentTime,
-          duration: fragment.duration ?? 0.04,
+          duration: Math.min(fragment.duration ?? 0.02, 0.028),
           level: fragmentVelocity,
           frequency: fragment.frequency ?? 1100,
         });
@@ -388,7 +440,7 @@ function App() {
       bassEvents.forEach((event) => {
         bass.triggerAttackRelease(
           event.note ?? 'C2',
-          stepDuration * (event.length ?? 0.72),
+          Math.min(stepDuration * (event.length ?? 0.72), 0.19),
           time + timingFor('Kick') * 0.6,
           event.level ?? 0.48,
         );
@@ -403,22 +455,24 @@ function App() {
       transport.stop();
       transport.clear(eventId);
       kick.dispose();
-      kickSub.dispose();
+      kickClicks.forEach((voice) => voice.dispose());
+      kickClickHighPass.dispose();
+      kickClickLowPass.dispose();
       kickFilter.dispose();
+      kickLowCut.dispose();
       kickDrive.dispose();
       bass.dispose();
       bassFilter.dispose();
+      bassLowCut.dispose();
       bassDrive.dispose();
-      bassAmbience.dispose();
+      bassSend.dispose();
       snareVoices.forEach((voice) => voice.dispose());
+      percussionFm.dispose();
       snareBody.dispose();
       snareSoftener.dispose();
       hatVoices.forEach((voice) => voice.dispose());
       hatAir.dispose();
       hatSoftener.dispose();
-      breathLfo.dispose();
-      paperLfo.dispose();
-      airLfo.dispose();
       grainVoices.forEach((voice) => voice.dispose());
       grainFilter.dispose();
       grainCrusher.dispose();
@@ -428,12 +482,20 @@ function App() {
       dropletFilter.dispose();
       dropletDelay.dispose();
       chordReverb.dispose();
+      chordDry.dispose();
+      chordReturn.dispose();
       airBed.dispose();
       airBedFilter.dispose();
       airBedGain.dispose();
-      ambienceSend.dispose();
+      kickSend.dispose();
+      percussionSend.dispose();
+      hatSend.dispose();
+      glitchSend.dispose();
       ambience.dispose();
+      ambienceReturn.dispose();
       dryBus.dispose();
+      masterLowCut.dispose();
+      masterSaturation.dispose();
       compressor.dispose();
       limiter.dispose();
     };
