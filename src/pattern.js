@@ -20,6 +20,8 @@ export const makeEmptyPattern = () => ({
   _ambientLayers: Array.from({ length: STEPS }, () => []),
   _bassLine: Array.from({ length: STEPS }, () => []),
   _bassMotifIndex: 0,
+  _melodyMotif: { base: 9, degrees: [9, 9] },
+  _melodyLine: Array.from({ length: STEPS }, () => []),
 });
 
 const createRandom = (seed) => {
@@ -42,14 +44,21 @@ const HAT_MOTIFS = [
   [true, false, true, true, false, true, false, true],
 ];
 
-// 共通音を残しながらゆっくり移れる、開いたテンションコードの循環。
-const HARMONY_CYCLE = [
-  { name: 'Cmaj9', notes: ['C3', 'G3', 'B3', 'D4', 'E4'], bass: ['C2', 'G2', 'D3', 'C3'] },
-  { name: 'Am9', notes: ['A2', 'E3', 'G3', 'B3', 'C4'], bass: ['A1', 'E2', 'B2', 'A2'] },
-  { name: 'Fmaj9#11', notes: ['F2', 'C3', 'E3', 'G3', 'B3'], bass: ['F1', 'C2', 'G2', 'F2'] },
-  { name: 'G13sus', notes: ['G2', 'D3', 'F3', 'A3', 'E4'], bass: ['G1', 'D2', 'A2', 'G2'] },
-  { name: 'Dm11', notes: ['D3', 'A3', 'C4', 'E4', 'G4'], bass: ['D2', 'A2', 'E3', 'D3'] },
-  { name: 'Em11', notes: ['E3', 'B3', 'D4', 'F#4', 'A4'], bass: ['E2', 'B2', 'F#3', 'E3'] },
+// 和音と旋律はすべて A Dorian（A B C D E F# G）を共有する。
+const HARMONIES = {
+  Am9: { name: 'Am9', notes: ['A2', 'E3', 'B3', 'C3', 'G3'], bass: ['A1', 'E2', 'B2', 'A2'] },
+  Dsus2: { name: 'Dsus2', notes: ['D3', 'A3', 'E4', 'B4', 'C4'], bass: ['D2', 'A2', 'E3', 'D3'] },
+  Em11: { name: 'Em11', notes: ['E3', 'B3', 'F#4', 'G3', 'D4', 'A4'], bass: ['E2', 'B2', 'F#3', 'E3'] },
+  G69: { name: 'G6/9', notes: ['G2', 'D3', 'A3', 'B3', 'E4'], bass: ['G1', 'D2', 'A2', 'G2'] },
+  Cmaj9: { name: 'Cmaj9', notes: ['C3', 'G3', 'D4', 'E3', 'B3'], bass: ['C2', 'G2', 'D3', 'C3'] },
+  D69: { name: 'D6/9', notes: ['D3', 'A3', 'E4', 'F#3', 'B3'], bass: ['D2', 'A2', 'E3', 'D3'] },
+  Cmaj7s11: { name: 'Cmaj7(#11)', notes: ['C3', 'G3', 'D4', 'E3', 'B3', 'F#4'], bass: ['C2', 'G2', 'D3', 'C3'] },
+};
+
+const MODE_NOTES = [
+  'A2', 'B2', 'C3', 'D3', 'E3', 'F#3', 'G3',
+  'A3', 'B3', 'C4', 'D4', 'E4', 'F#4', 'G4',
+  'A4', 'B4', 'C5', 'D5', 'E5', 'F#5', 'G5', 'A5',
 ];
 
 const BASS_MOTIFS = [
@@ -59,8 +68,26 @@ const BASS_MOTIFS = [
   [0, 5, 9, 15],
 ];
 
-const harmonyAt = (generation) =>
-  HARMONY_CYCLE[Math.floor(generation / 2) % HARMONY_CYCLE.length];
+const normalizeControls = (controls = {}) => ({
+  bloom: clamp((controls.Bloom ?? 42) / 100, 0, 1),
+  orbit: clamp((controls.Orbit ?? 34) / 100, 0, 1),
+  light: clamp((controls.Light ?? 52) / 100, 0, 1),
+});
+
+const harmonyAt = (generation, controls) => {
+  const { light } = normalizeControls(controls);
+  const palette = light < 0.34
+    ? [HARMONIES.Am9, HARMONIES.Dsus2, HARMONIES.Em11, HARMONIES.Am9]
+    : light > 0.68
+      ? [HARMONIES.Cmaj9, HARMONIES.D69, HARMONIES.Cmaj7s11, HARMONIES.G69]
+      : [HARMONIES.Am9, HARMONIES.G69, HARMONIES.Cmaj9, HARMONIES.Dsus2];
+  return palette[Math.floor(generation / 2) % palette.length];
+};
+
+const notesForBloom = (harmony, bloom) => {
+  const voiceCount = bloom < 0.15 ? 1 : bloom < 0.32 ? 2 : bloom < 0.5 ? 3 : bloom < 0.68 ? 4 : bloom < 0.86 ? 5 : 6;
+  return harmony.notes.slice(0, voiceCount);
+};
 
 const breakLongHatRuns = (hat) => {
   let run = 0;
@@ -149,9 +176,10 @@ const makeFineDust = ({ random, generation, phraseLength, pattern }) => {
   return dust;
 };
 
-const makeAmbientLayers = ({ random, generation, phraseLength, breathAt }) => {
+const makeAmbientLayers = ({ random, generation, phraseLength, breathAt, controls }) => {
   const layers = Array.from({ length: STEPS }, () => []);
   const phrasePosition = generation % phraseLength;
+  const { bloom } = normalizeControls(controls);
 
   // 空気の膜は周期の始まり、残光は中盤にだけ現れる。
   if (generation === 0 || phrasePosition === 0) {
@@ -164,12 +192,14 @@ const makeAmbientLayers = ({ random, generation, phraseLength, breathAt }) => {
     });
   }
 
-  if (phrasePosition === Math.floor(phraseLength / 2) || (generation > 0 && generation % 5 === 1)) {
+  const harmonyInterval = Math.round(10 - bloom * 5);
+  const harmonyMoment = generation > 0 && generation % harmonyInterval === 1;
+  if (harmonyMoment) {
     const step = pick([2, 6, 10, 14], random);
-    const harmony = harmonyAt(generation);
+    const harmony = harmonyAt(generation, controls);
     layers[step].push({
       kind: 'droplet',
-      chord: harmony.notes,
+      chord: notesForBloom(harmony, bloom),
       harmony: harmony.name,
       length: pick([10, 12, 14], random),
       level: clamp(0.14 + breathAt(step) * 0.055, 0.13, 0.2),
@@ -179,9 +209,9 @@ const makeAmbientLayers = ({ random, generation, phraseLength, breathAt }) => {
   return layers;
 };
 
-const makeBassLine = ({ generation, phraseLength, breathAt, motifIndex }) => {
+const makeBassLine = ({ generation, phraseLength, breathAt, motifIndex, controls }) => {
   const bassLine = Array.from({ length: STEPS }, () => []);
-  const harmony = harmonyAt(generation);
+  const harmony = harmonyAt(generation, controls);
   const motif = BASS_MOTIFS[motifIndex % BASS_MOTIFS.length];
   const phraseEnding = generation % phraseLength === phraseLength - 1;
 
@@ -200,7 +230,87 @@ const makeBassLine = ({ generation, phraseLength, breathAt, motifIndex }) => {
   return bassLine;
 };
 
-export const seededPattern = (seed) => {
+const motifStepsFor = (length) => {
+  const templates = {
+    2: [3, 11],
+    3: [2, 8, 13],
+    4: [1, 5, 10, 14],
+    5: [1, 4, 7, 11, 14],
+    6: [1, 3, 6, 9, 12, 15],
+  };
+  return templates[length] ?? templates[3];
+};
+
+const createMotif = (random, controls) => {
+  const { orbit, light } = normalizeControls(controls);
+  const length = Math.min(6, 2 + Math.floor(orbit * 5));
+  const base = 7 + Math.round(light * 5);
+  const span = 1 + Math.floor(orbit * 6);
+  const degrees = Array.from({ length }, (_, index) => {
+    if (orbit < 0.16) return base;
+    if (index === 0) return base;
+    return clamp(base + Math.floor((random() - 0.5) * (span * 2 + 1)), 3, MODE_NOTES.length - 3);
+  });
+  return { degrees, base };
+};
+
+const evolveMotif = (previousMotif, random, generation, controls) => {
+  const { orbit, light } = normalizeControls(controls);
+  const desiredLength = Math.min(6, 2 + Math.floor(orbit * 5));
+  const targetBase = 7 + Math.round(light * 5);
+  const motif = {
+    base: previousMotif?.base ?? targetBase,
+    degrees: [...(previousMotif?.degrees ?? [targetBase, targetBase])],
+  };
+
+  if (generation % 2 === 0) {
+    motif.base += Math.sign(targetBase - motif.base);
+  }
+  while (motif.degrees.length < desiredLength) {
+    const source = motif.degrees[motif.degrees.length % Math.max(1, motif.degrees.length)] ?? motif.base;
+    motif.degrees.push(clamp(source + (random() < 0.5 ? -1 : 1), 3, MODE_NOTES.length - 3));
+  }
+  if (motif.degrees.length > desiredLength) motif.degrees.length -= 1;
+
+  // 全交換せず、一度に一音だけ変形することで同じ個体の記憶を残す。
+  if (generation % 2 === 0 && motif.degrees.length) {
+    const index = generation % motif.degrees.length;
+    const movement = orbit < 0.12 ? 0 : orbit < 0.3 ? pick([-1, 0, 1], random) : pick([-2, -1, 1, 2], random);
+    const span = 1 + Math.floor(orbit * 6);
+    motif.degrees[index] = clamp(
+      motif.degrees[index] + movement,
+      motif.base - span,
+      motif.base + span,
+    );
+  }
+
+  const registerShift = motif.base - (previousMotif?.base ?? motif.base);
+  if (registerShift) {
+    motif.degrees = motif.degrees.map((degree) => clamp(degree + registerShift, 3, MODE_NOTES.length - 3));
+  }
+  return motif;
+};
+
+const makeMelodyLine = ({ generation, motif, controls, breathAt }) => {
+  const melody = Array.from({ length: STEPS }, () => []);
+  const { orbit, light } = normalizeControls(controls);
+  const restInterval = orbit > 0.72 ? 2 : 3;
+  if (generation % restInterval === restInterval - 1) return melody;
+
+  const steps = motifStepsFor(motif.degrees.length);
+  motif.degrees.forEach((degree, index) => {
+    const step = steps[index];
+    if (step == null) return;
+    melody[step].push({
+      note: MODE_NOTES[clamp(Math.round(degree), 0, MODE_NOTES.length - 1)],
+      length: orbit > 0.65 ? 0.72 : 0.54,
+      level: clamp(0.26 + breathAt(step) * 0.1 + light * 0.035, 0.24, 0.38),
+    });
+  });
+  return melody;
+};
+
+export const seededPattern = (seed, controls = {}) => {
   const random = createRandom(seed);
   const chance = (probability) => random() < probability;
   const breathPhase = random() * Math.PI * 2;
@@ -302,6 +412,7 @@ export const seededPattern = (seed) => {
 
   const phraseLength = pick([4, 4, 6, 8], random);
   const bassMotifIndex = Math.floor(random() * BASS_MOTIFS.length);
+  const melodyMotif = createMotif(random, controls);
   const pattern = {
     Kick: kick,
     Snare: snare,
@@ -315,6 +426,8 @@ export const seededPattern = (seed) => {
     _phraseLength: phraseLength,
     _breathPhase: breathPhase,
     _bassMotifIndex: bassMotifIndex,
+    _melodyMotif: melodyMotif,
+    _melodyLine: Array.from({ length: STEPS }, () => []),
   };
 
   pattern._fragments = makeFragments({
@@ -335,12 +448,20 @@ export const seededPattern = (seed) => {
     generation: 0,
     phraseLength,
     breathAt,
+    controls,
   });
   pattern._bassLine = makeBassLine({
     generation: 0,
     phraseLength,
     breathAt,
     motifIndex: bassMotifIndex,
+    controls,
+  });
+  pattern._melodyLine = makeMelodyLine({
+    generation: 0,
+    motif: melodyMotif,
+    controls,
+    breathAt,
   });
   return pattern;
 };
@@ -366,7 +487,7 @@ const keepDensity = (track, minimum, maximum, protectedSteps = []) => {
 
 // 直前の小節を「記憶」として受け取り、少しだけ次の状態へ進める。
 // 音符の変化は数小節おきに一箇所だけ。タイミングと強弱は毎小節滑らかに動く。
-export const evolvePattern = (previous) => {
+export const evolvePattern = (previous, controls = {}) => {
   const generation = (previous._generation ?? 0) + 1;
   const seed = previous._seed ?? 1;
   const random = createRandom((seed ^ Math.imul(generation, 2654435761)) >>> 0);
@@ -470,12 +591,21 @@ export const evolvePattern = (previous) => {
     generation,
     phraseLength,
     breathAt: slowBreath,
+    controls,
   });
   next._bassLine = makeBassLine({
     generation,
     phraseLength,
     breathAt: slowBreath,
     motifIndex: previous._bassMotifIndex ?? 0,
+    controls,
+  });
+  next._melodyMotif = evolveMotif(previous._melodyMotif, random, generation, controls);
+  next._melodyLine = makeMelodyLine({
+    generation,
+    motif: next._melodyMotif,
+    controls,
+    breathAt: slowBreath,
   });
   return next;
 };

@@ -3,15 +3,28 @@ import * as Tone from 'tone';
 import { evolvePattern, seededPattern, STEPS, TRACKS } from './pattern.js';
 
 const KNOBS = ['Drift', 'Bloom', 'Mist', 'Pulse', 'Orbit', 'Decay', 'Density', 'Light'];
+const DEFAULT_KNOB_VALUES = {
+  Drift: 28,
+  Bloom: 42,
+  Mist: 54,
+  Pulse: 46,
+  Orbit: 34,
+  Decay: 62,
+  Density: 38,
+  Light: 52,
+};
+const MUSICAL_KNOBS = new Set(['Bloom', 'Orbit', 'Light']);
 
 function App() {
+  const [knobValues, setKnobValues] = useState(DEFAULT_KNOB_VALUES);
   const [pattern, setPattern] = useState(() =>
-    seededPattern(Math.floor(Math.random() * 2 ** 32)),
+    seededPattern(Math.floor(Math.random() * 2 ** 32), DEFAULT_KNOB_VALUES),
   );
   const [bpm, setBpm] = useState(84);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentStep, setCurrentStep] = useState(-1);
   const patternRef = useRef(pattern);
+  const knobValuesRef = useRef(DEFAULT_KNOB_VALUES);
   const synthsRef = useRef(null);
   const stepRef = useRef(0);
   const cycleRef = useRef(0);
@@ -21,19 +34,24 @@ function App() {
   }, [pattern]);
 
   useEffect(() => {
+    knobValuesRef.current = knobValues;
+  }, [knobValues]);
+
+  useEffect(() => {
     Tone.getTransport().bpm.value = bpm;
   }, [bpm]);
 
   useEffect(() => {
     const transport = Tone.getTransport();
 
-    const limiter = new Tone.Limiter(-8).toDestination();
+    const limiter = new Tone.Limiter(-1).toDestination();
+    const masterVolume = new Tone.Volume(4).connect(limiter);
     const compressor = new Tone.Compressor({
       threshold: -26,
       ratio: 1.35,
       attack: 0.035,
       release: 0.22,
-    }).connect(limiter);
+    }).connect(masterVolume);
     const masterSaturation = new Tone.Distortion({
       distortion: 0.025,
       oversample: '2x',
@@ -57,6 +75,7 @@ function App() {
     const hatSend = new Tone.Gain(0.055).connect(ambience);
     const glitchSend = new Tone.Gain(0.1).connect(ambience);
     const bassSend = new Tone.Gain(0.035).connect(ambience);
+    const melodySend = new Tone.Gain(0.075).connect(ambience);
 
     // 白色ノイズを極短エンベロープで切り出す、精密な粒子グリッチ層。
     const grainVoices = Array.from({ length: 12 }, () => new Tone.NoiseSynth({
@@ -183,6 +202,29 @@ function App() {
       wet: 0.14,
     });
 
+    const melody = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'triangle' },
+      envelope: { attack: 0.006, decay: 0.14, sustain: 0.035, release: 0.26 },
+    });
+    melody.volume.value = -28;
+    const melodyHighPass = new Tone.Filter({
+      type: 'highpass',
+      frequency: 190,
+      rolloff: -24,
+      Q: 0.3,
+    });
+    const melodyFilter = new Tone.Filter({
+      type: 'lowpass',
+      frequency: 2400,
+      rolloff: -24,
+      Q: 0.58,
+    });
+    const melodyDelay = new Tone.PingPongDelay({
+      delayTime: Tone.Time('16n').toSeconds(),
+      feedback: 0.1,
+      wet: 0.16,
+    });
+
     const snareVoices = Array.from({ length: 4 }, () => new Tone.NoiseSynth({
       noise: { type: 'white' },
       envelope: { attack: 0.001, decay: 0.085, sustain: 0, release: 0.028 },
@@ -240,6 +282,12 @@ function App() {
     bassDrive.connect(dryBus);
     bassDrive.connect(bassSend);
 
+    melody.connect(melodyHighPass);
+    melodyHighPass.connect(melodyFilter);
+    melodyFilter.connect(melodyDelay);
+    melodyDelay.connect(dryBus);
+    melodyDelay.connect(melodySend);
+
     snareVoices.forEach((voice) => voice.connect(snareBody));
     percussionFm.connect(snareBody);
     snareBody.connect(snareSoftener);
@@ -268,6 +316,7 @@ function App() {
     synthsRef.current = {
       Kick: kick,
       Bass: bass,
+      Melody: melody,
       Snare: snareVoices,
       'Hi-Hat': hatVoices,
       effects: [
@@ -282,6 +331,11 @@ function App() {
         bassLowCut,
         bassDrive,
         bassSend,
+        melody,
+        melodyHighPass,
+        melodyFilter,
+        melodyDelay,
+        melodySend,
         percussionFm,
         snareBody,
         snareSoftener,
@@ -311,6 +365,7 @@ function App() {
         masterLowCut,
         masterSaturation,
         compressor,
+        masterVolume,
         limiter,
       ],
     };
@@ -322,7 +377,7 @@ function App() {
       // 一周ごとに前の状態を受け継いだ次の小節を生成する。
       // 見た目の16点は現在位置の表示にだけ使い、演奏内容は固定ループにしない。
       if (step === 0 && cycleRef.current > 0) {
-        activePattern = evolvePattern(activePattern);
+        activePattern = evolvePattern(activePattern, knobValuesRef.current);
         patternRef.current = activePattern;
         Tone.getDraw().schedule(() => setPattern(activePattern), time);
       }
@@ -335,6 +390,7 @@ function App() {
         activePattern._velocity?.[track]?.[step]
         ?? activePattern._accent?.[step]
         ?? 0.7;
+      const lightValue = (knobValuesRef.current.Light ?? 52) / 100;
 
       if (activePattern.Kick[step]) {
         const kickVelocity = velocityFor('Kick');
@@ -420,6 +476,7 @@ function App() {
       const ambientEvents = activePattern._ambientLayers?.[step] ?? [];
       ambientEvents.forEach((event) => {
         if (event.kind === 'droplet') {
+          dropletFilter.frequency.setValueAtTime(1050 + lightValue * 2300, time);
           droplet.triggerAttackRelease(
             event.chord ?? ['C3', 'G3', 'B3', 'D4', 'E4'],
             stepDuration * (event.length ?? 3.5),
@@ -446,6 +503,17 @@ function App() {
         );
       });
 
+      const melodyEvents = activePattern._melodyLine?.[step] ?? [];
+      melodyEvents.forEach((event) => {
+        melodyFilter.frequency.setValueAtTime(950 + lightValue * 3300, time);
+        melody.triggerAttackRelease(
+          event.note ?? 'A3',
+          Math.min(stepDuration * (event.length ?? 0.54), 0.32),
+          time + 0.004,
+          event.level ?? 0.3,
+        );
+      });
+
       Tone.getDraw().schedule(() => setCurrentStep(step), time);
       stepRef.current = (step + 1) % STEPS;
       if (step === STEPS - 1) cycleRef.current += 1;
@@ -466,6 +534,11 @@ function App() {
       bassLowCut.dispose();
       bassDrive.dispose();
       bassSend.dispose();
+      melody.dispose();
+      melodyHighPass.dispose();
+      melodyFilter.dispose();
+      melodyDelay.dispose();
+      melodySend.dispose();
       snareVoices.forEach((voice) => voice.dispose());
       percussionFm.dispose();
       snareBody.dispose();
@@ -497,6 +570,7 @@ function App() {
       masterLowCut.dispose();
       masterSaturation.dispose();
       compressor.dispose();
+      masterVolume.dispose();
       limiter.dispose();
     };
   }, []);
@@ -524,11 +598,24 @@ function App() {
     setIsPlaying(false);
   };
 
+  const changeKnob = (name, value) => {
+    const nextValues = { ...knobValuesRef.current, [name]: value };
+    knobValuesRef.current = nextValues;
+    setKnobValues(nextValues);
+
+    if (!isPlaying) {
+      const nextPattern = seededPattern(patternRef.current._seed ?? 1, nextValues);
+      patternRef.current = nextPattern;
+      cycleRef.current = 0;
+      setPattern(nextPattern);
+    }
+  };
+
   const seed = () => {
     setPattern((previous) => {
       for (let attempt = 0; attempt < 8; attempt += 1) {
         const nextSeed = Math.floor(Math.random() * 2 ** 32);
-        const next = seededPattern(nextSeed);
+        const next = seededPattern(nextSeed, knobValuesRef.current);
         const isDifferent = TRACKS.some((track) =>
           next[track].some((active, step) => active !== previous[track][step]),
         );
@@ -575,18 +662,32 @@ function App() {
         </section>
 
         <section className="knob-grid" aria-label="Fluxus Orbit controls">
-          {KNOBS.map((name, index) => (
-            <div className="knob-module" key={name}>
-              <div
-                className="knob"
-                style={{ '--rotation': `${-132 + index * 23}deg` }}
-                aria-hidden="true"
-              >
-                <span />
+          {KNOBS.map((name) => {
+            const value = knobValues[name];
+            const isMusical = MUSICAL_KNOBS.has(name);
+            return (
+              <div className={`knob-module ${isMusical ? 'interactive' : ''}`} key={name}>
+                <div
+                  className="knob"
+                  style={{ '--rotation': `${-132 + value * 2.64}deg` }}
+                  aria-hidden={isMusical ? undefined : 'true'}
+                >
+                  <span />
+                  {isMusical && (
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={value}
+                      aria-label={name}
+                      onChange={(event) => changeKnob(name, Number(event.target.value))}
+                    />
+                  )}
+                </div>
+                <p>{name}</p>
               </div>
-              <p>{name}</p>
-            </div>
-          ))}
+            );
+          })}
         </section>
 
         <section className="orbit-window" aria-label="Fluxus Orbit activity">

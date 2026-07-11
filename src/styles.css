@@ -178,6 +178,30 @@ h1 {
   border-radius: inherit;
 }
 
+.knob input[type="range"] {
+  position: absolute;
+  z-index: 2;
+  inset: -12px;
+  width: calc(100% + 24px);
+  height: calc(100% + 24px);
+  margin: 0;
+  opacity: 0;
+  cursor: ew-resize;
+}
+
+.knob-module.interactive .knob {
+  border-color: rgba(220, 225, 209, 0.22);
+}
+
+.knob-module.interactive .knob:focus-within {
+  outline: 1px solid rgba(214, 224, 204, 0.46);
+  outline-offset: 5px;
+}
+
+.knob-module.interactive p {
+  color: rgba(232, 228, 211, 0.9);
+}
+
 .knob span {
   position: absolute;
   top: 9px;
